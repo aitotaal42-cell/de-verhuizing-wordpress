@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://deverhuizing.nl/sitemap.xml
