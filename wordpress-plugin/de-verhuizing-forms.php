@@ -340,7 +340,8 @@ class DeVerhuizingForms {
 
         echo '<div class="dv-per-page">';
         echo '<label>Toon</label>';
-        echo '<select onchange="var url=new URL(window.location.href);url.searchParams.set(\'per_page\',this.value);url.searchParams.set(\'paged\',\'1\');window.location.href=url.toString();">';
+        $base = admin_url('admin.php?page=' . $page_slug);
+        echo '<select onchange="window.location.href=\'' . esc_js($base) . '&per_page=\'+this.value+\'&paged=1\';">';
         foreach ([20, 40, 60, 80, 100] as $opt) {
             $sel = $per_page === $opt ? ' selected' : '';
             echo '<option value="' . $opt . '"' . $sel . '>' . $opt . '</option>';
