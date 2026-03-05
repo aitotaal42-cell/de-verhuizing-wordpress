@@ -59,6 +59,7 @@ class DeVerhuizingForms {
             .dv-per-page select { padding:2px 6px; font-size:13px; }
             .dv-pagination-bar { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin:12px 0; }
             .dv-pagination-info { font-size:13px; color:#50575e; }
+            .dv-sort-bar { display:flex; gap:8px; align-items:center; margin:4px 0 12px; flex-wrap:wrap; }
         ');
     }
 
@@ -307,16 +308,19 @@ class DeVerhuizingForms {
         $allowed = [20, 40, 60, 80, 100];
         if (!in_array($per_page, $allowed)) $per_page = 20;
         $current_page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
-        return ['per_page' => $per_page, 'current_page' => $current_page];
+        $orderby = isset($_GET['orderby']) ? sanitize_text_field($_GET['orderby']) : 'created_at';
+        $order = isset($_GET['order']) && strtoupper($_GET['order']) === 'ASC' ? 'ASC' : 'DESC';
+        return ['per_page' => $per_page, 'current_page' => $current_page, 'orderby' => $orderby, 'order' => $order];
     }
 
-    private function get_paginated_items($table, $per_page, $current_page) {
+    private function get_paginated_items($table, $per_page, $current_page, $orderby, $order, $allowed_columns) {
         global $wpdb;
+        if (!in_array($orderby, $allowed_columns)) $orderby = 'created_at';
         $total = (int) $wpdb->get_var("SELECT COUNT(*) FROM $table");
         $total_pages = max(1, ceil($total / $per_page));
         if ($current_page > $total_pages) $current_page = $total_pages;
         $offset = ($current_page - 1) * $per_page;
-        $items = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table ORDER BY created_at DESC LIMIT %d OFFSET %d", $per_page, $offset));
+        $items = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table ORDER BY $orderby $order LIMIT %d OFFSET %d", $per_page, $offset));
         return [
             'items' => $items,
             'total' => $total,
@@ -324,7 +328,45 @@ class DeVerhuizingForms {
             'current_page' => $current_page,
             'per_page' => $per_page,
             'offset' => $offset,
+            'orderby' => $orderby,
+            'order' => $order,
         ];
+    }
+
+    private function build_url($page_slug, $pagination, $overrides = []) {
+        $params = [
+            'page' => $page_slug,
+            'paged' => $overrides['paged'] ?? $pagination['current_page'],
+            'per_page' => $overrides['per_page'] ?? $pagination['per_page'],
+            'orderby' => $overrides['orderby'] ?? $pagination['orderby'],
+            'order' => $overrides['order'] ?? $pagination['order'],
+        ];
+        return admin_url('admin.php?' . http_build_query($params));
+    }
+
+    private function render_sort_dropdown($page_slug, $pagination, $sort_columns) {
+        $orderby = $pagination['orderby'];
+        $order = $pagination['order'];
+        $per_page = $pagination['per_page'];
+
+        $base_params = 'page=' . $page_slug . '&per_page=' . $per_page . '&paged=1';
+
+        echo '<div class="dv-sort-bar">';
+
+        echo '<div class="dv-per-page">';
+        echo '<label>Sorteer op</label>';
+        echo '<select onchange="var v=this.value.split(\'|\');window.location.href=\'' . esc_js(admin_url('admin.php?' . $base_params)) . '&orderby=\'+v[0]+\'&order=\'+v[1];">';
+        foreach ($sort_columns as $col => $label) {
+            foreach (['DESC' => 'aflopend', 'ASC' => 'oplopend'] as $dir => $dir_label) {
+                $val = $col . '|' . $dir;
+                $sel = ($orderby === $col && $order === $dir) ? ' selected' : '';
+                echo '<option value="' . esc_attr($val) . '"' . $sel . '>' . esc_html($label) . ' (' . $dir_label . ')</option>';
+            }
+        }
+        echo '</select>';
+        echo '</div>';
+
+        echo '</div>';
     }
 
     private function render_pagination_bar($page_slug, $pagination) {
@@ -340,8 +382,8 @@ class DeVerhuizingForms {
 
         echo '<div class="dv-per-page">';
         echo '<label>Toon</label>';
-        $base = admin_url('admin.php?page=' . $page_slug);
-        echo '<select onchange="window.location.href=\'' . esc_js($base) . '&per_page=\'+this.value+\'&paged=1\';">';
+        $base_url = $this->build_url($page_slug, $pagination, ['paged' => 1]);
+        echo '<select onchange="var url=\'' . esc_js($base_url) . '\';url=url.replace(/per_page=\d+/,\'per_page=\'+this.value);window.location.href=url;">';
         foreach ([20, 40, 60, 80, 100] as $opt) {
             $sel = $per_page === $opt ? ' selected' : '';
             echo '<option value="' . $opt . '"' . $sel . '>' . $opt . '</option>';
@@ -356,8 +398,8 @@ class DeVerhuizingForms {
             echo '<div class="dv-pagination">';
 
             if ($current_page > 1) {
-                echo '<a href="' . esc_url($this->pagination_url($page_slug, 1, $per_page)) . '" title="Eerste">&laquo;</a>';
-                echo '<a href="' . esc_url($this->pagination_url($page_slug, $current_page - 1, $per_page)) . '" title="Vorige">&lsaquo;</a>';
+                echo '<a href="' . esc_url($this->build_url($page_slug, $pagination, ['paged' => 1])) . '" title="Eerste">&laquo;</a>';
+                echo '<a href="' . esc_url($this->build_url($page_slug, $pagination, ['paged' => $current_page - 1])) . '" title="Vorige">&lsaquo;</a>';
             } else {
                 echo '<span class="dv-page-disabled">&laquo;</span>';
                 echo '<span class="dv-page-disabled">&lsaquo;</span>';
@@ -367,7 +409,7 @@ class DeVerhuizingForms {
             $range_end = min($total_pages, $current_page + 2);
 
             if ($range_start > 1) {
-                echo '<a href="' . esc_url($this->pagination_url($page_slug, 1, $per_page)) . '">1</a>';
+                echo '<a href="' . esc_url($this->build_url($page_slug, $pagination, ['paged' => 1])) . '">1</a>';
                 if ($range_start > 2) echo '<span class="dv-page-disabled">&hellip;</span>';
             }
 
@@ -375,18 +417,18 @@ class DeVerhuizingForms {
                 if ($i === $current_page) {
                     echo '<span class="dv-page-current">' . $i . '</span>';
                 } else {
-                    echo '<a href="' . esc_url($this->pagination_url($page_slug, $i, $per_page)) . '">' . $i . '</a>';
+                    echo '<a href="' . esc_url($this->build_url($page_slug, $pagination, ['paged' => $i])) . '">' . $i . '</a>';
                 }
             }
 
             if ($range_end < $total_pages) {
                 if ($range_end < $total_pages - 1) echo '<span class="dv-page-disabled">&hellip;</span>';
-                echo '<a href="' . esc_url($this->pagination_url($page_slug, $total_pages, $per_page)) . '">' . $total_pages . '</a>';
+                echo '<a href="' . esc_url($this->build_url($page_slug, $pagination, ['paged' => $total_pages])) . '">' . $total_pages . '</a>';
             }
 
             if ($current_page < $total_pages) {
-                echo '<a href="' . esc_url($this->pagination_url($page_slug, $current_page + 1, $per_page)) . '" title="Volgende">&rsaquo;</a>';
-                echo '<a href="' . esc_url($this->pagination_url($page_slug, $total_pages, $per_page)) . '" title="Laatste">&raquo;</a>';
+                echo '<a href="' . esc_url($this->build_url($page_slug, $pagination, ['paged' => $current_page + 1])) . '" title="Volgende">&rsaquo;</a>';
+                echo '<a href="' . esc_url($this->build_url($page_slug, $pagination, ['paged' => $total_pages])) . '" title="Laatste">&raquo;</a>';
             } else {
                 echo '<span class="dv-page-disabled">&rsaquo;</span>';
                 echo '<span class="dv-page-disabled">&raquo;</span>';
@@ -396,10 +438,6 @@ class DeVerhuizingForms {
         }
 
         echo '</div>';
-    }
-
-    private function pagination_url($page_slug, $paged, $per_page) {
-        return admin_url('admin.php?page=' . $page_slug . '&paged=' . $paged . '&per_page=' . $per_page);
     }
 
     private function handle_bulk_delete($table, $nonce_action) {
@@ -653,7 +691,20 @@ class DeVerhuizingForms {
         }
 
         $params = $this->get_pagination_params();
-        $pagination = $this->get_paginated_items($table, $params['per_page'], $params['current_page']);
+        $sort_columns = [
+            'created_at' => 'Ontvangen',
+            'first_name' => 'Voornaam',
+            'last_name' => 'Achternaam',
+            'email' => 'Email',
+            'phone' => 'Telefoon',
+            'move_from_city' => 'Van plaats',
+            'move_to_city' => 'Naar plaats',
+            'move_type' => 'Type',
+            'move_date' => 'Verhuisdatum',
+            'status' => 'Status',
+            'id' => 'ID',
+        ];
+        $pagination = $this->get_paginated_items($table, $params['per_page'], $params['current_page'], $params['orderby'], $params['order'], array_keys($sort_columns));
         $items = $pagination['items'];
         $statuses = ['nieuw', 'in_behandeling', 'offerte_verstuurd', 'afgerond', 'geannuleerd'];
         ?>
@@ -663,6 +714,7 @@ class DeVerhuizingForms {
                 <?php $this->render_export_buttons('quotes'); ?>
                 <span id="dv-selected-count" style="margin-left:8px;color:#50575e"></span>
             </div>
+            <?php $this->render_sort_dropdown('deverhuizing', $pagination, $sort_columns); ?>
             <?php $this->render_pagination_bar('deverhuizing', $pagination); ?>
             <form method="post" id="dv-bulk-form">
                 <?php wp_nonce_field('dv_bulk_quotes'); ?>
@@ -764,7 +816,17 @@ class DeVerhuizingForms {
         }
 
         $params = $this->get_pagination_params();
-        $pagination = $this->get_paginated_items($table, $params['per_page'], $params['current_page']);
+        $sort_columns = [
+            'created_at' => 'Ontvangen',
+            'first_name' => 'Voornaam',
+            'last_name' => 'Achternaam',
+            'phone' => 'Telefoon',
+            'email' => 'Email',
+            'preferred_time' => 'Voorkeurstijd',
+            'status' => 'Status',
+            'id' => 'ID',
+        ];
+        $pagination = $this->get_paginated_items($table, $params['per_page'], $params['current_page'], $params['orderby'], $params['order'], array_keys($sort_columns));
         $items = $pagination['items'];
         $statuses = ['nieuw', 'in_behandeling', 'afgerond', 'geannuleerd'];
         ?>
@@ -774,6 +836,7 @@ class DeVerhuizingForms {
                 <?php $this->render_export_buttons('callbacks'); ?>
                 <span id="dv-selected-count" style="margin-left:8px;color:#50575e"></span>
             </div>
+            <?php $this->render_sort_dropdown('deverhuizing-callbacks', $pagination, $sort_columns); ?>
             <?php $this->render_pagination_bar('deverhuizing-callbacks', $pagination); ?>
             <form method="post" id="dv-bulk-form">
                 <?php wp_nonce_field('dv_bulk_callbacks'); ?>
@@ -855,7 +918,16 @@ class DeVerhuizingForms {
         }
 
         $params = $this->get_pagination_params();
-        $pagination = $this->get_paginated_items($table, $params['per_page'], $params['current_page']);
+        $sort_columns = [
+            'created_at' => 'Ontvangen',
+            'name' => 'Naam',
+            'email' => 'Email',
+            'phone' => 'Telefoon',
+            'subject' => 'Onderwerp',
+            'status' => 'Status',
+            'id' => 'ID',
+        ];
+        $pagination = $this->get_paginated_items($table, $params['per_page'], $params['current_page'], $params['orderby'], $params['order'], array_keys($sort_columns));
         $items = $pagination['items'];
         $statuses = ['nieuw', 'in_behandeling', 'afgerond', 'geannuleerd'];
         ?>
@@ -865,6 +937,7 @@ class DeVerhuizingForms {
                 <?php $this->render_export_buttons('contact'); ?>
                 <span id="dv-selected-count" style="margin-left:8px;color:#50575e"></span>
             </div>
+            <?php $this->render_sort_dropdown('deverhuizing-contact', $pagination, $sort_columns); ?>
             <?php $this->render_pagination_bar('deverhuizing-contact', $pagination); ?>
             <form method="post" id="dv-bulk-form">
                 <?php wp_nonce_field('dv_bulk_contact'); ?>
