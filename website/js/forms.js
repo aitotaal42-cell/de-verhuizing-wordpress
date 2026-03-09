@@ -1,6 +1,15 @@
-var DV_WORDPRESS_URL = 'https://deverhuizing.nl';
+var DV_API_URL = 'https://deverhuizing.nl';
+var DV_API_MODE = 'wordpress';
 
 (function() {
+  function getEndpointUrl(endpoint) {
+    if (DV_API_MODE === 'wordpress') {
+      return DV_API_URL + '/wp-json/deverhuizing/v1/' + endpoint;
+    }
+    var map = { quote: 'quote-requests', callback: 'callback-requests', contact: 'contact-messages' };
+    return DV_API_URL + '/api/' + (map[endpoint] || endpoint);
+  }
+
   function showMessage(form, message, isError) {
     var existing = form.querySelector('.dv-form-message');
     if (existing) existing.remove();
@@ -34,9 +43,9 @@ var DV_WORDPRESS_URL = 'https://deverhuizing.nl';
     return el ? el.value.trim() : '';
   }
 
-  function submitToWP(endpoint, data, form, button) {
+  function submitForm(endpoint, data, form, button) {
     setLoading(button, true);
-    fetch(DV_WORDPRESS_URL + '/wp-json/deverhuizing/v1/' + endpoint, {
+    fetch(getEndpointUrl(endpoint), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -82,7 +91,7 @@ var DV_WORDPRESS_URL = 'https://deverhuizing.nl';
           showMessage(quickForm, 'Vul a.u.b. uw naam en telefoonnummer in.', true);
           return;
         }
-        submitToWP('quote', data, quickForm, btn);
+        submitForm('quote', data, quickForm, btn);
       });
     }
 
@@ -106,7 +115,7 @@ var DV_WORDPRESS_URL = 'https://deverhuizing.nl';
             showMessage(form, 'Vul a.u.b. uw naam en telefoonnummer in.', true);
             return;
           }
-          submitToWP('callback', data, form, btn);
+          submitForm('callback', data, form, btn);
         });
         return;
       }
@@ -135,7 +144,28 @@ var DV_WORDPRESS_URL = 'https://deverhuizing.nl';
             showMessage(form, 'Vul a.u.b. uw naam, e-mail en telefoonnummer in.', true);
             return;
           }
-          submitToWP('quote', data, form, btn);
+          submitForm('quote', data, form, btn);
+        });
+        return;
+      }
+
+      var contactName = form.querySelector('[data-testid="input-contact-name"]');
+      if (contactName) {
+        form.addEventListener('submit', function(e) {
+          e.preventDefault();
+          var btn = form.querySelector('[data-testid="button-contact-submit"]') || form.querySelector('button[type="submit"]') || form.querySelector('button');
+          var data = {
+            name: getVal(form, 'name'),
+            email: getVal(form, 'email'),
+            phone: getVal(form, 'phone'),
+            subject: getVal(form, 'subject'),
+            message: getVal(form, 'message')
+          };
+          if (!data.name || !data.email || !data.message) {
+            showMessage(form, 'Vul a.u.b. uw naam, e-mail en bericht in.', true);
+            return;
+          }
+          submitForm('contact', data, form, btn);
         });
         return;
       }
